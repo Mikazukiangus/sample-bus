@@ -1,7 +1,90 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { BusService, BusStop, ServiceStopArrival, BusArrivalInfo } from '../types/transit';
 import { INITIAL_BUS_SERVICES, ALL_SERVICES_AT_CURRENT_STOP } from '../data/transitData';
 import { fetchLiveBusArrival, transformLTABus } from '../services/ltaService';
+
+function resolveBusService(serviceNo: string, currentStop: BusStop): BusService {
+  const clean = serviceNo.trim().toUpperCase();
+  if (INITIAL_BUS_SERVICES[clean]) {
+    return INITIAL_BUS_SERVICES[clean];
+  }
+
+  // Dynamic model for any entered bus service (e.g. 15, 176, 83, 960)
+  const num = parseInt(clean.replace(/\D/g, ''), 10) || 1;
+  const isSMRT = clean.startsWith('9') || clean.startsWith('8') || clean.startsWith('17') || clean.startsWith('18');
+  const operator = isSMRT ? 'SMRT' : 'SBS Transit';
+
+  return {
+    serviceNo: clean,
+    operator,
+    category: clean.endsWith('E') ? 'EXPRESS' : 'TRUNK',
+    origin: `Service ${clean} Origin`,
+    destination: `Service ${clean} Terminus`,
+    via: `Calling at ${currentStop.name} (${currentStop.code}) & connecting transit corridor`,
+    direction1Name: `Dir 1: Towards Terminus`,
+    direction2Name: `Dir 2: Towards Origin`,
+    isWAB: true,
+    simplyGoStandard: true,
+    firstBusWeekday: '05:30 – 23:45',
+    lastBusWeekday: '23:45',
+    firstBusSat: '05:30 – 23:45',
+    lastBusSat: '23:45',
+    firstBusSun: '05:45 – 23:45',
+    lastBusSun: '23:45',
+    peakHeadway: '5 - 9 mins',
+    offPeakHeadway: '8 - 14 mins',
+    arrivals: [
+      {
+        busId: `bus-${clean}-1`,
+        plate: `SG${Math.floor(1000 + (num * 37) % 8000)}B`,
+        estimatedMinutes: 2,
+        isArriving: false,
+        deckType: 'DD',
+        deckName: 'Double Deck (DD)',
+        crowding: 'seats',
+        crowdingLabel: 'Seats Avail',
+        isWheelchairAccessible: true,
+        powertrain: 'Euro 6 Diesel',
+        distanceMetres: 480,
+        speedKmh: 36,
+      },
+      {
+        busId: `bus-${clean}-2`,
+        plate: `SG${Math.floor(2000 + (num * 41) % 7000)}Y`,
+        estimatedMinutes: 8,
+        isArriving: false,
+        deckType: 'DD',
+        deckName: 'Double Deck (DD)',
+        crowding: 'standing',
+        crowdingLabel: 'Standing Avail',
+        isWheelchairAccessible: true,
+        powertrain: 'Euro 6 Diesel',
+        distanceMetres: 1950,
+        speedKmh: 34,
+      },
+      {
+        busId: `bus-${clean}-3`,
+        plate: `SBS${Math.floor(3000 + (num * 23) % 6000)}G`,
+        estimatedMinutes: 17,
+        isArriving: false,
+        deckType: 'SD',
+        deckName: 'Single Deck (SD)',
+        crowding: 'crowded',
+        crowdingLabel: 'Limited Standing',
+        isWheelchairAccessible: true,
+        powertrain: 'EV Electric',
+        distanceMetres: 4100,
+        speedKmh: 31,
+      },
+    ],
+    progressionStops: [
+      { code: '08069', name: 'Approaching Stop', isPast: true, isCurrent: false, distance: '400m ago' },
+      { code: currentStop.code, name: currentStop.name, isPast: false, isCurrent: true, distance: 'At Stop' },
+      { code: '08051', name: 'MacDonald House', isPast: false, isCurrent: false, isNext: true, distance: '+450m' },
+      { code: '08111', name: 'Winsland House', isPast: false, isCurrent: false, distance: '+980m' },
+    ],
+  };
+}
 
 interface LiveBusArrivalScreenProps {
   currentStop: BusStop;
@@ -38,15 +121,18 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
 
   // Available services
   const availableServices = INITIAL_BUS_SERVICES;
-  const currentService: BusService = availableServices[selectedServiceNo] || availableServices['65'];
+  const currentService: BusService = useMemo(() => {
+    return resolveBusService(selectedServiceNo, currentStop);
+  }, [selectedServiceNo, currentStop]);
 
-  const fetchArrivals = useCallback(async () => {
+  const fetchArrivals = useCallback(async (svcNoToQuery?: string) => {
+    const targetService = (svcNoToQuery || selectedServiceNo).trim().toUpperCase();
     try {
-      const result = await fetchLiveBusArrival(currentStop.code, selectedServiceNo);
+      const result = await fetchLiveBusArrival(currentStop.code, targetService);
       if (result.isLive && result.services && result.services.length > 0) {
         setIsLtaLive(true);
         const targetSvc =
-          result.services.find((s) => s.ServiceNo === selectedServiceNo) || result.services[0];
+          result.services.find((s) => s.ServiceNo.toUpperCase() === targetService) || result.services[0];
         if (targetSvc) {
           const arr1 = transformLTABus(targetSvc.NextBus, 1, targetSvc.ServiceNo);
           const arr2 = transformLTABus(targetSvc.NextBus2, 2, targetSvc.ServiceNo);
@@ -54,11 +140,11 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
           const valid = [arr1, arr2, arr3].filter(Boolean) as BusArrivalInfo[];
           if (valid.length > 0) {
             setLiveArrivals(valid);
+            return;
           }
         }
-      } else {
-        setIsLtaLive(false);
       }
+      setIsLtaLive(false);
     } catch {
       setIsLtaLive(false);
     }
@@ -92,8 +178,8 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
       setIsRefreshing(false);
       triggerToast(
         isLtaLive
-          ? 'Live LTA DataMall v3 telemetry feed synced'
-          : 'DataMall 20s telemetry synced (simulated fallback)'
+          ? `Live LTA DataMall v3 telemetry feed synced for Bus ${selectedServiceNo}`
+          : `DataMall 20s telemetry synced for Bus ${selectedServiceNo} (simulated fallback)`
       );
     }, 400);
   };
@@ -103,17 +189,19 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
     setTimeout(() => setShowToast(null), 3000);
   };
 
-  const handleSelectService = (serviceNo: string) => {
-    if (availableServices[serviceNo]) {
-      setSelectedServiceNo(serviceNo);
-      setSearchInput(serviceNo);
-    } else {
-      setSelectedServiceNo('65');
-      setSearchInput(serviceNo);
-      triggerToast(`Showing simulated arrivals for Bus ${serviceNo}`);
-    }
+  const handleApplyService = (serviceNo: string) => {
+    const clean = serviceNo.trim().toUpperCase();
+    if (!clean) return;
+    setSelectedServiceNo(clean);
+    setSearchInput(clean);
     setLiveArrivals(null);
     setSearchSuggestionsOpen(false);
+    triggerToast(`Querying arrivals for Bus ${clean}...`);
+    fetchArrivals(clean);
+  };
+
+  const handleSelectService = (serviceNo: string) => {
+    handleApplyService(serviceNo);
   };
 
   const toggleFavorite = (serviceNo: string) => {
@@ -210,7 +298,13 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
           </div>
 
           {/* Live Bus Query Input & Omnibox Strip */}
-          <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3 pt-1">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleApplyService(searchInput);
+            }}
+            className="flex flex-col md:flex-row items-stretch md:items-center gap-3 pt-1"
+          >
             <div className="relative flex-1">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <span className="material-symbols-outlined text-[24px] text-[#9e001f]">directions_bus</span>
@@ -222,15 +316,18 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
                   setSearchInput(e.target.value);
                   setSearchSuggestionsOpen(true);
                 }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleApplyService(searchInput);
+                  }
+                }}
                 onFocus={() => setSearchSuggestionsOpen(true)}
-                placeholder="Enter SG Bus Service (e.g. 65, 190, 147, 960)..."
-                className="w-full pl-12 pr-28 py-3.5 bg-[#f1f3ff] focus:bg-white text-[#141b2b] font-headline-sm text-lg rounded-xl focus:outline-none focus:ring-2 focus:ring-[#9e001f] shadow-inner transition-all placeholder:text-[#906f6e]"
+                placeholder="Enter SG Bus Service (e.g. 15, 65, 176, 190, 831)..."
+                className="w-full pl-12 pr-40 py-3.5 bg-[#f1f3ff] focus:bg-white text-[#141b2b] font-headline-sm text-lg rounded-xl focus:outline-none focus:ring-2 focus:ring-[#9e001f] shadow-inner transition-all placeholder:text-[#906f6e]"
               />
 
-              <div className="absolute inset-y-0 right-0 pr-2 flex items-center gap-1">
-                <span className="bg-[#9e001f] text-white font-label-sm text-[11px] px-2 py-1 rounded uppercase tracking-wider font-bold">
-                  Active
-                </span>
+              <div className="absolute inset-y-0 right-0 pr-2 flex items-center gap-1.5">
                 {searchInput && (
                   <button
                     type="button"
@@ -238,23 +335,54 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
                       setSearchInput('');
                     }}
                     className="p-1 text-[#5c403f] hover:text-[#141b2b]"
+                    title="Clear input"
                   >
                     <span className="material-symbols-outlined text-[18px]">cancel</span>
                   </button>
                 )}
+
+                <button
+                  type="submit"
+                  className="bg-[#9e001f] hover:bg-[#c8102e] text-white font-label-sm text-[12px] px-3.5 py-1.5 rounded-lg uppercase tracking-wider font-bold transition-all shadow-xs flex items-center gap-1 active:scale-95 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[16px]">search</span>
+                  <span>Query</span>
+                </button>
               </div>
 
               {/* Suggestions Dropdown */}
-              {searchSuggestionsOpen && searchInput && (
-                <div className="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-xl border border-slate-200 z-30 max-h-48 overflow-y-auto divide-y divide-slate-100">
+              {searchSuggestionsOpen && searchInput.trim() && (
+                <div className="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-2xl border border-slate-200 z-40 max-h-60 overflow-y-auto divide-y divide-slate-100">
+                  {/* Immediate Search Action for the typed text */}
+                  <div
+                    onClick={() => handleApplyService(searchInput)}
+                    className="p-3 bg-[#f1f3ff] hover:bg-[#e9edff] cursor-pointer flex items-center justify-between text-xs font-semibold text-[#9e001f]"
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[18px]">search</span>
+                      <span>
+                        Query Bus Service{' '}
+                        <strong className="font-mono text-sm underline">
+                          "{searchInput.trim().toUpperCase()}"
+                        </strong>
+                      </span>
+                    </div>
+                    <span className="text-[11px] bg-[#9e001f] text-white px-2 py-0.5 rounded font-mono font-bold">
+                      Enter ↵
+                    </span>
+                  </div>
+
+                  {/* Matching Known Services */}
                   {Object.keys(availableServices)
-                    .filter((key) => key.includes(searchInput))
+                    .filter((key) => key.toLowerCase().includes(searchInput.toLowerCase()))
                     .map((key) => {
                       const svc = availableServices[key];
                       return (
                         <div
                           key={key}
-                          onClick={() => handleSelectService(key)}
+                          onClick={() => handleApplyService(key)}
                           className="p-3 hover:bg-[#f1f3ff] cursor-pointer flex items-center justify-between text-xs"
                           role="button"
                           tabIndex={0}
@@ -303,7 +431,7 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
                 <span>{currentService.direction2Name}</span>
               </button>
             </div>
-          </div>
+          </form>
 
           {/* Quick Suggest Filter Chips */}
           <div className="flex items-center gap-2 mt-3 overflow-x-auto pb-1">
