@@ -15,6 +15,7 @@ import { AlertModal } from './components/AlertModal';
 import { ShareModal } from './components/ShareModal';
 import { NotificationsDrawer } from './components/NotificationsDrawer';
 import { ProfileDrawer } from './components/ProfileDrawer';
+import { ApiHealthModal } from './components/ApiHealthModal';
 import { Footer } from './components/Footer';
 import { POPULAR_BUS_STOPS } from './data/transitData';
 import { BusStop } from './types/transit';
@@ -32,6 +33,7 @@ export default function App() {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isHealthModalOpen, setIsHealthModalOpen] = useState(false);
 
   // Modal context payload
   const [alertServiceNo, setAlertServiceNo] = useState('65');
@@ -75,6 +77,7 @@ export default function App() {
         unreadCount={unreadNotifications}
         onOpenNotifications={() => setIsNotificationsOpen(true)}
         onOpenProfile={() => setIsProfileOpen(true)}
+        onOpenHealthModal={() => setIsHealthModalOpen(true)}
         currentStopName={currentStop.name}
       />
 
@@ -87,6 +90,7 @@ export default function App() {
             onOpenExpandedMap={() => setIsExpandedMapOpen(true)}
             onOpenAlertModal={handleOpenAlert}
             onOpenShareModal={handleOpenShare}
+            onOpenHealthModal={() => setIsHealthModalOpen(true)}
             onSelectServiceForRouteExplorer={(svcNo) => {
               setActiveScreen('route-explorer');
             }}
@@ -156,6 +160,11 @@ export default function App() {
       <ProfileDrawer
         isOpen={isProfileOpen}
         onClose={() => setIsProfileOpen(false)}
+      />
+
+      <ApiHealthModal
+        isOpen={isHealthModalOpen}
+        onClose={() => setIsHealthModalOpen(false)}
       />
     </div>
   );

@@ -11,6 +11,7 @@ interface HeaderProps {
   unreadCount: number;
   onOpenNotifications: () => void;
   onOpenProfile: () => void;
+  onOpenHealthModal?: () => void;
   currentStopName: string;
 }
 
@@ -22,6 +23,7 @@ export const Header: React.FC<HeaderProps> = ({
   unreadCount,
   onOpenNotifications,
   onOpenProfile,
+  onOpenHealthModal,
   currentStopName,
 }) => {
   return (
@@ -169,9 +171,19 @@ export const Header: React.FC<HeaderProps> = ({
             All SBS Transit and SMRT trunk & feeder routes operational • LTA real-time feed synced
           </p>
         </div>
-        <div className="hidden md:flex items-center gap-1.5 shrink-0 text-[#16A34A] font-medium text-xs">
-          <span className="material-symbols-outlined text-[16px]">sensors</span>
-          <span className="font-label-sm text-xs text-[#5c403f]">DataMall 5.0 Feed Active</span>
+        <div className="hidden md:flex items-center gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={onOpenHealthModal}
+            className="flex items-center gap-1.5 text-[#16A34A] hover:text-emerald-700 font-medium text-xs bg-white/70 hover:bg-white px-2 py-0.5 rounded-md border border-[#dce2f7] transition-colors"
+            title="Inspect /api/health endpoint status"
+          >
+            <span className="material-symbols-outlined text-[16px]">sensors</span>
+            <span className="font-label-sm text-xs text-[#141b2b] font-semibold">DataMall 5.0 Feed</span>
+            <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1 py-0.2 rounded font-mono font-bold">
+              /api/health
+            </span>
+          </button>
         </div>
       </div>
 

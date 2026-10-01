@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { BusService, BusStop, ServiceStopArrival } from '../types/transit';
+import React, { useState, useEffect, useCallback } from 'react';
+import { BusService, BusStop, ServiceStopArrival, BusArrivalInfo } from '../types/transit';
 import { INITIAL_BUS_SERVICES, ALL_SERVICES_AT_CURRENT_STOP } from '../data/transitData';
+import { fetchLiveBusArrival, transformLTABus } from '../services/ltaService';
 
 interface LiveBusArrivalScreenProps {
   currentStop: BusStop;
@@ -9,6 +10,7 @@ interface LiveBusArrivalScreenProps {
   onOpenAlertModal: (serviceNo: string) => void;
   onOpenShareModal: (serviceNo: string, arrival: string) => void;
   onSelectServiceForRouteExplorer?: (serviceNo: string) => void;
+  onOpenHealthModal?: () => void;
 }
 
 export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
@@ -18,6 +20,7 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
   onOpenAlertModal,
   onOpenShareModal,
   onSelectServiceForRouteExplorer,
+  onOpenHealthModal,
 }) => {
   const [selectedServiceNo, setSelectedServiceNo] = useState<string>('65');
   const [activeDirection, setActiveDirection] = useState<'dir1' | 'dir2'>('dir1');
@@ -29,15 +32,49 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
   const [selectedFareType, setSelectedFareType] = useState<'adult' | 'student' | 'senior'>('adult');
   const [searchSuggestionsOpen, setSearchSuggestionsOpen] = useState(false);
 
+  // Live LTA DataMall State
+  const [isLtaLive, setIsLtaLive] = useState<boolean>(false);
+  const [liveArrivals, setLiveArrivals] = useState<BusArrivalInfo[] | null>(null);
+
   // Available services
   const availableServices = INITIAL_BUS_SERVICES;
   const currentService: BusService = availableServices[selectedServiceNo] || availableServices['65'];
 
-  // Countdown timer simulation
+  const fetchArrivals = useCallback(async () => {
+    try {
+      const result = await fetchLiveBusArrival(currentStop.code, selectedServiceNo);
+      if (result.isLive && result.services && result.services.length > 0) {
+        setIsLtaLive(true);
+        const targetSvc =
+          result.services.find((s) => s.ServiceNo === selectedServiceNo) || result.services[0];
+        if (targetSvc) {
+          const arr1 = transformLTABus(targetSvc.NextBus, 1, targetSvc.ServiceNo);
+          const arr2 = transformLTABus(targetSvc.NextBus2, 2, targetSvc.ServiceNo);
+          const arr3 = transformLTABus(targetSvc.NextBus3, 3, targetSvc.ServiceNo);
+          const valid = [arr1, arr2, arr3].filter(Boolean) as BusArrivalInfo[];
+          if (valid.length > 0) {
+            setLiveArrivals(valid);
+          }
+        }
+      } else {
+        setIsLtaLive(false);
+      }
+    } catch {
+      setIsLtaLive(false);
+    }
+  }, [currentStop.code, selectedServiceNo]);
+
+  // Initial and periodic fetch on 20s cadence
+  useEffect(() => {
+    fetchArrivals();
+  }, [fetchArrivals]);
+
+  // Countdown timer simulation (20-second LTA refresh cycle)
   useEffect(() => {
     const timer = setInterval(() => {
       setSyncCountdown((prev) => {
         if (prev <= 1) {
+          fetchArrivals();
           return 20; // reset
         }
         return prev - 1;
@@ -45,14 +82,19 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
     }, 1000);
 
     return () => clearInterval(timer);
-  }, []);
+  }, [fetchArrivals]);
 
   const triggerManualRefresh = () => {
     setIsRefreshing(true);
     setSyncCountdown(20);
+    fetchArrivals();
     setTimeout(() => {
       setIsRefreshing(false);
-      triggerToast('LTA DataMall telemetry feed refreshed');
+      triggerToast(
+        isLtaLive
+          ? 'Live LTA DataMall v3 telemetry feed synced'
+          : 'DataMall 20s telemetry synced (simulated fallback)'
+      );
     }, 400);
   };
 
@@ -66,11 +108,11 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
       setSelectedServiceNo(serviceNo);
       setSearchInput(serviceNo);
     } else {
-      // Set to 65 or fallback
       setSelectedServiceNo('65');
       setSearchInput(serviceNo);
       triggerToast(`Showing simulated arrivals for Bus ${serviceNo}`);
     }
+    setLiveArrivals(null);
     setSearchSuggestionsOpen(false);
   };
 
@@ -83,6 +125,7 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
   };
 
   const commonTrunkServices = ['65', '147', '190', '14', '166', '7', '106'];
+  const displayArrivals: BusArrivalInfo[] = liveArrivals && liveArrivals.length > 0 ? liveArrivals : currentService.arrivals;
 
   return (
     <div className="flex flex-col w-full">
@@ -317,6 +360,22 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
                       <span className="inline-flex items-center gap-1 text-[#0284C7] font-label-sm text-xs font-medium">
                         <span className="material-symbols-outlined text-[14px]">accessible</span> WAB Certified
                       </span>
+                      {isLtaLive ? (
+                        <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                          LTA v3 Live Feed
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={onOpenHealthModal}
+                          className="bg-amber-50 hover:bg-amber-100 text-amber-800 text-[10px] font-medium px-2 py-0.5 rounded-full border border-amber-200 flex items-center gap-1 transition-colors"
+                          title="Click to inspect /api/health and LTA_ACCOUNT_KEY status"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                          Simulated Feed (Check API)
+                        </button>
+                      )}
                     </div>
 
                     <h2 className="font-headline-md text-xl text-[#141b2b] font-bold tracking-tight">
@@ -360,7 +419,9 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
                     onClick={() =>
                       onOpenShareModal(
                         currentService.serviceNo,
-                        currentService.arrivals[0]?.estimatedMinutes === 1 ? '1 min' : `${currentService.arrivals[0]?.estimatedMinutes} mins`
+                        displayArrivals[0]?.isArriving
+                          ? '1 min'
+                          : `${displayArrivals[0]?.estimatedMinutes || 1} mins`
                       )
                     }
                     className="p-2.5 bg-[#f1f3ff] hover:bg-[#e1e8fd] text-[#141b2b] rounded-lg shadow-xs transition-transform active:scale-95"
@@ -384,16 +445,20 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
                       1st Bus Arrival
                     </span>
                     <span className="bg-[#00517d]/10 text-[#00517d] font-label-sm text-[11px] px-1.5 py-0.5 rounded font-mono font-bold">
-                      {currentService.arrivals[0]?.plate || 'SG5902T'}
+                      {displayArrivals[0]?.plate || 'SG5902T'}
                     </span>
                   </div>
 
                   <div className="my-2">
                     <div className="flex items-baseline gap-1">
                       <span className="font-telemetry-time text-2xl text-[#16A34A] tracking-tight font-extrabold">
-                        {currentService.arrivals[0]?.isArriving ? 'ARRIVING' : `${currentService.arrivals[0]?.estimatedMinutes} mins`}
+                        {displayArrivals[0]?.isArriving || displayArrivals[0]?.estimatedMinutes <= 1
+                          ? 'ARRIVING'
+                          : `${displayArrivals[0]?.estimatedMinutes} mins`}
                       </span>
-                      <span className="font-title-md text-sm text-[#5c403f] font-medium">(1 min)</span>
+                      <span className="font-title-md text-sm text-[#5c403f] font-medium">
+                        ({displayArrivals[0]?.estimatedMinutes <= 1 ? '1 min' : `${displayArrivals[0]?.estimatedMinutes}m`})
+                      </span>
                     </div>
                     <div className="w-full bg-[#f1f5f9] rounded-full h-1.5 mt-1 overflow-hidden">
                       <div className="bg-[#16A34A] h-1.5 rounded-full w-[94%]"></div>
@@ -405,10 +470,11 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
                     <div className="flex items-center justify-between text-xs">
                       <span className="inline-flex items-center gap-1 text-[#141b2b] font-medium">
                         <span className="material-symbols-outlined text-[16px] text-[#9e001f]">directions_bus</span>{' '}
-                        {currentService.arrivals[0]?.deckName || 'Double Deck (DD)'}
+                        {displayArrivals[0]?.deckName || 'Double Deck (DD)'}
                       </span>
                       <span className="inline-flex items-center gap-1 bg-[#16A34A]/10 text-[#16A34A] px-2 py-0.5 rounded-full font-label-sm text-[11px] font-semibold">
-                        <span className="material-symbols-outlined text-[14px]">airline_seat_recline_normal</span> Seats Avail
+                        <span className="material-symbols-outlined text-[14px]">airline_seat_recline_normal</span>{' '}
+                        {displayArrivals[0]?.crowdingLabel || 'Seats Avail'}
                       </span>
                     </div>
 
@@ -417,7 +483,7 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
                         <span className="material-symbols-outlined text-[16px]">accessible_forward</span> Wheelchair Ramp
                       </span>
                       <span className="bg-[#f1f5f9] text-[#5c403f] font-label-sm text-[11px] px-1.5 py-0.5 rounded">
-                        ⚡ {currentService.arrivals[0]?.powertrain || 'EV Electric'}
+                        ⚡ {displayArrivals[0]?.powertrain || 'EV Electric'}
                       </span>
                     </div>
                   </div>
@@ -430,14 +496,14 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
                       2nd Bus Arrival
                     </span>
                     <span className="bg-[#f1f5f9] text-[#5c403f] font-label-sm text-[11px] px-1.5 py-0.5 rounded font-mono font-bold">
-                      {currentService.arrivals[1]?.plate || 'SG1840E'}
+                      {displayArrivals[1]?.plate || 'SG1840E'}
                     </span>
                   </div>
 
                   <div className="my-2">
                     <div className="flex items-baseline gap-1">
                       <span className="font-telemetry-time text-2xl text-[#141b2b] tracking-tight font-extrabold">
-                        {currentService.arrivals[1]?.estimatedMinutes || 8} mins
+                        {displayArrivals[1]?.estimatedMinutes || 8} mins
                       </span>
                     </div>
                     <div className="w-full bg-[#f1f5f9] rounded-full h-1.5 mt-1 overflow-hidden">
@@ -450,10 +516,11 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
                     <div className="flex items-center justify-between text-xs">
                       <span className="inline-flex items-center gap-1 text-[#141b2b] font-medium">
                         <span className="material-symbols-outlined text-[16px] text-[#9e001f]">directions_bus</span>{' '}
-                        {currentService.arrivals[1]?.deckName || 'Double Deck (DD)'}
+                        {displayArrivals[1]?.deckName || 'Double Deck (DD)'}
                       </span>
                       <span className="inline-flex items-center gap-1 bg-[#D97706]/10 text-[#D97706] px-2 py-0.5 rounded-full font-label-sm text-[11px] font-semibold">
-                        <span className="material-symbols-outlined text-[14px]">person</span> Standing Avail
+                        <span className="material-symbols-outlined text-[14px]">person</span>{' '}
+                        {displayArrivals[1]?.crowdingLabel || 'Standing Avail'}
                       </span>
                     </div>
 
@@ -462,7 +529,7 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
                         <span className="material-symbols-outlined text-[16px]">accessible_forward</span> Wheelchair Ramp
                       </span>
                       <span className="bg-[#f1f5f9] text-[#5c403f] font-label-sm text-[11px] px-1.5 py-0.5 rounded">
-                        {currentService.arrivals[1]?.powertrain || 'Euro 6 Diesel'}
+                        {displayArrivals[1]?.powertrain || 'Euro 6 Diesel'}
                       </span>
                     </div>
                   </div>
@@ -475,14 +542,14 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
                       3rd Bus Arrival
                     </span>
                     <span className="bg-[#f1f5f9] text-[#5c403f] font-label-sm text-[11px] px-1.5 py-0.5 rounded font-mono font-bold">
-                      {currentService.arrivals[2]?.plate || 'SBS8831B'}
+                      {displayArrivals[2]?.plate || 'SBS8831B'}
                     </span>
                   </div>
 
                   <div className="my-2">
                     <div className="flex items-baseline gap-1">
                       <span className="font-telemetry-time text-2xl text-[#141b2b] tracking-tight font-extrabold">
-                        {currentService.arrivals[2]?.estimatedMinutes || 19} mins
+                        {displayArrivals[2]?.estimatedMinutes || 19} mins
                       </span>
                     </div>
                     <div className="w-full bg-[#f1f5f9] rounded-full h-1.5 mt-1 overflow-hidden">
@@ -495,10 +562,11 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
                     <div className="flex items-center justify-between text-xs">
                       <span className="inline-flex items-center gap-1 text-[#141b2b] font-medium">
                         <span className="material-symbols-outlined text-[16px] text-[#5c403f]">directions_bus</span>{' '}
-                        {currentService.arrivals[2]?.deckName || 'Single Deck (SD)'}
+                        {displayArrivals[2]?.deckName || 'Single Deck (SD)'}
                       </span>
                       <span className="inline-flex items-center gap-1 bg-[#DC2626]/10 text-[#DC2626] px-2 py-0.5 rounded-full font-label-sm text-[11px] font-semibold">
-                        <span className="material-symbols-outlined text-[14px]">groups</span> Limited Standing
+                        <span className="material-symbols-outlined text-[14px]">groups</span>{' '}
+                        {displayArrivals[2]?.crowdingLabel || 'Limited Standing'}
                       </span>
                     </div>
 
@@ -507,7 +575,7 @@ export const LiveBusArrivalScreen: React.FC<LiveBusArrivalScreenProps> = ({
                         <span className="material-symbols-outlined text-[16px]">accessible_forward</span> Wheelchair Ramp
                       </span>
                       <span className="bg-[#f1f5f9] text-[#5c403f] font-label-sm text-[11px] px-1.5 py-0.5 rounded">
-                        {currentService.arrivals[2]?.powertrain || 'Euro 5 Diesel'}
+                        {displayArrivals[2]?.powertrain || 'Euro 5 Diesel'}
                       </span>
                     </div>
                   </div>
