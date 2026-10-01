@@ -1,0 +1,6 @@
+{
+  "name": "Lion City Transit System",
+  "description": "Real-time Singapore public bus arrival intelligence, telemetry, route explorer, and commuter services powered by LTA DataMall standards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
